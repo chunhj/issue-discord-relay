@@ -7,7 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record IssuesPayload(String action, Issue issue, Repository repository) {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Issue(long number, String title, @JsonProperty("html_url") String htmlUrl) {
+    public record Issue(Long number, String title, @JsonProperty("html_url") String htmlUrl) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
