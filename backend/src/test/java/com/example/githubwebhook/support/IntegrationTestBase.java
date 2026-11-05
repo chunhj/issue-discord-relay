@@ -67,6 +67,10 @@ public abstract class IntegrationTestBase {
         return "http://localhost:" + port + "/webhooks/github";
     }
 
+    protected String apiUrl(String path) {
+        return "http://localhost:" + port + path;
+    }
+
     protected HttpResponse<String> postSigned(String event, String deliveryId, byte[] body) throws Exception {
         return http.send(
                 SignedRequests.request(webhookUrl(), event, deliveryId, body, SignedRequests.signature(body)).build(),
