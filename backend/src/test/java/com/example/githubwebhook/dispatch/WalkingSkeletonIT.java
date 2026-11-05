@@ -66,9 +66,9 @@ class WalkingSkeletonIT extends IntegrationTestBase {
     }
 
     @Test
-    void discord_failure_marks_job_failed_without_retry() throws Exception {
+    void permanent_discord_failure_marks_job_failed_without_retry() throws Exception {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
-                .willReturn(aResponse().withStatus(500).withBody("upstream boom")));
+                .willReturn(aResponse().withStatus(404).withBody("unknown webhook")));
 
         assertThat(postSigned("issues", "delivery-w2", SignedRequests.issuesOpened(7002, "Fails")).statusCode())
                 .isEqualTo(202);
@@ -78,7 +78,7 @@ class WalkingSkeletonIT extends IntegrationTestBase {
         Map<String, Object> job = jdbc.queryForMap("SELECT * FROM dispatch_jobs");
         assertThat(job.get("status")).isEqualTo("FAILED");
         assertThat(job.get("attempts")).isEqualTo(1);
-        assertThat((String) job.get("last_error")).startsWith("HTTP 500").doesNotContain("localhost")
+        assertThat((String) job.get("last_error")).startsWith("HTTP 404").doesNotContain("localhost")
                 .doesNotContain("test-token");
         assertThat(job.get("locked_until")).isNull();
 

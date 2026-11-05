@@ -2,8 +2,13 @@ package com.example.githubwebhook.discord;
 
 import com.example.githubwebhook.config.AppProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.net.ConnectException;
 import java.net.URI;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.util.List;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -52,17 +57,34 @@ public class DiscordClient {
             return restClient.post().uri(uri).contentType(MediaType.APPLICATION_JSON).body(payload)
                     .exchange((request, response) -> {
                         int status = response.getStatusCode().value();
-                        String body = response.bodyTo(String.class);
-                        return response.getStatusCode().is2xxSuccessful()
-                                ? SendResult.delivered(status, messageId(body))
-                                : SendResult.httpFailure(status, "HTTP " + status + bodySnippet(body));
+                        // Status first: a stalled body must neither lose it nor turn a 2xx into a retry.
+                        String retryAfterHeader = response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER);
+                        String body = readBodyQuietly(response);
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            return SendResult.delivered(status, messageId(body));
+                        }
+                        Duration retryAfter = status == 429 ? parseRetryAfter(retryAfterHeader, body, json) : null;
+                        return SendResult.httpFailure(status, "HTTP " + status + bodySnippet(body), retryAfter);
                     });
         } catch (RestClientException e) {
-            // Exception messages embed the full URL including the token; keep class names only (D-13).
+            // Exception messages embed the full URL including the token; keep code and class names only (D-11, D-13).
+            IoKind kind = classify(e);
             Throwable cause = e.getCause();
-            return SendResult.ioFailure(e.getClass().getSimpleName()
+            return SendResult.ioFailure(kind, kind.code() + " / " + e.getClass().getSimpleName()
                     + (cause == null ? "" : " / " + cause.getClass().getSimpleName()));
         }
+    }
+
+    /** Connect classes first: HttpConnectTimeoutException is a subclass of HttpTimeoutException. */
+    private static IoKind classify(Throwable e) {
+        boolean timeout = false;
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof HttpConnectTimeoutException || t instanceof ConnectException) {
+                return IoKind.CONNECT;
+            }
+            timeout |= t instanceof HttpTimeoutException;
+        }
+        return timeout ? IoKind.RESPONSE_TIMEOUT : IoKind.OTHER;
     }
 
     /** "#number title", at most 256 UTF-16 units including the trailing ellipsis (Discord embed limit). */
@@ -76,6 +98,47 @@ public class DiscordClient {
             end--; // do not split a surrogate pair
         }
         return full.substring(0, end) + "…";
+    }
+
+    private static String readBodyQuietly(RestClient.RequestHeadersSpec.ConvertibleClientHttpResponse response) {
+        try {
+            return response.bodyTo(String.class);
+        } catch (RuntimeException e) {
+            return null; // read timeout covers the body too; the status is already known
+        }
+    }
+
+    /** Header first, then the body's retry_after (seconds, may be fractional); null when neither is usable. */
+    static Duration parseRetryAfter(String headerValue, String body, JsonMapper json) {
+        Duration fromHeader = toWait(headerValue == null ? null : parseSeconds(headerValue.trim()));
+        if (fromHeader != null) {
+            return fromHeader;
+        }
+        if (body == null) {
+            return null;
+        }
+        try {
+            JsonNode node = json.readTree(body).get("retry_after");
+            return node != null && node.isNumber() ? toWait(node.asDouble()) : null;
+        } catch (RuntimeException e) {
+            return null; // hostile or garbled body: fall back to the ordinary backoff
+        }
+    }
+
+    private static Double parseSeconds(String text) {
+        try {
+            return Double.parseDouble(text);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Finite and positive only; clamped to one year before the millisecond conversion (overflow guard). */
+    private static Duration toWait(Double seconds) {
+        if (seconds == null || !Double.isFinite(seconds) || seconds <= 0) {
+            return null;
+        }
+        return Duration.ofMillis(Math.round(Math.min(seconds, 31_536_000d) * 1000));
     }
 
     private String messageId(String body) {

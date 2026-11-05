@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.githubwebhook.config.AppProperties;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 /** Plain JUnit, no Spring, no Docker. Vector from GitHub docs "Validating webhook deliveries". */
@@ -17,7 +18,9 @@ class SignatureVerifierTest {
 
     private static SignatureVerifier verifierFor(String secret) {
         return new SignatureVerifier(new AppProperties(new AppProperties.Github(secret),
-                new AppProperties.Discord("http://localhost/x"), new AppProperties.Worker(true, 1000, 10, 30)));
+                new AppProperties.Discord("http://localhost/x"), new AppProperties.Worker(true, 1000, 10, 30,
+                        new AppProperties.Worker.Retry(5, Duration.ofSeconds(5), 3,
+                                Duration.ofSeconds(300), 0.2, Duration.ofSeconds(3600)))));
     }
 
     @Test

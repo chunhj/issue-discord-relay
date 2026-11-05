@@ -63,4 +63,15 @@ public interface DispatchJobRepository extends JpaRepository<DispatchJob, Long> 
             WHERE id = :id AND status = 'PROCESSING' AND attempts = :attempts
             """)
     int markFailed(@Param("id") long id, @Param("attempts") int attempts, @Param("error") String error);
+
+    // Delay is computed in Java, the point in time comes from the database clock like every other timestamp (D-04).
+    @Modifying
+    @Query(nativeQuery = true, value = """
+            UPDATE dispatch_jobs
+            SET status = 'RETRY_WAIT', locked_until = NULL, last_error = :error,
+                next_attempt_at = now() + CAST(:delayMillis AS bigint) * interval '1 millisecond'
+            WHERE id = :id AND status = 'PROCESSING' AND attempts = :attempts
+            """)
+    int markRetry(@Param("id") long id, @Param("attempts") int attempts, @Param("delayMillis") long delayMillis,
+            @Param("error") String error);
 }

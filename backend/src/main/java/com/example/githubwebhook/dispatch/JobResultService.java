@@ -17,11 +17,15 @@ public class JobResultService {
 
     private final DispatchAttemptRepository attempts;
 
+    private final RetryPolicy retryPolicy;
+
     private final int leaseSeconds;
 
-    public JobResultService(DispatchJobRepository jobs, DispatchAttemptRepository attempts, AppProperties props) {
+    public JobResultService(DispatchJobRepository jobs, DispatchAttemptRepository attempts, AppProperties props,
+            RetryPolicy retryPolicy) {
         this.jobs = jobs;
         this.attempts = attempts;
+        this.retryPolicy = retryPolicy;
         this.leaseSeconds = props.worker().leaseSeconds();
     }
 
@@ -35,23 +39,37 @@ public class JobResultService {
     }
 
     /**
-     * Short transaction. Finishes the attempt first, always: it records what Discord answered even if this worker lost
-     * the job. D-02: every failure is FAILED, no retry state. Returns false if the job was re-claimed.
+     * Short transaction, the single SENT / FAILED / RETRY_WAIT decision point (D-10). Finishes the attempt first,
+     * always: it records what Discord answered even if this worker lost the job, and the last attempt of an exhausted
+     * job stays RETRYABLE_FAIL (D-09). Returns false if the job was re-claimed.
      */
     @Transactional
     public boolean complete(ClaimedJob job, SendResult result) {
         String error = null;
         if (!result.delivered()) {
-            error = result.error() == null ? "unknown" : result.error();
-            error = error.length() > ERROR_MAX ? error.substring(0, ERROR_MAX) : error;
+            error = cap(result.error() == null ? "unknown" : result.error());
         }
-        attempts.finish(job.jobId(), job.attempts(), AttemptOutcome.from(result).name(), result.httpStatus(), error);
-        int updated = result.delivered()
-                ? jobs.markSent(job.jobId(), job.attempts(), result.messageId())
-                : jobs.markFailed(job.jobId(), job.attempts(), error);
+        AttemptOutcome outcome = AttemptOutcome.from(result);
+        attempts.finish(job.jobId(), job.attempts(), outcome.name(), result.httpStatus(), error);
+        int updated;
+        if (result.delivered()) {
+            updated = jobs.markSent(job.jobId(), job.attempts(), result.messageId());
+        } else if (outcome == AttemptOutcome.RETRYABLE_FAIL && !retryPolicy.isExhausted(job.attempts())) {
+            long delayMillis = retryPolicy.nextDelay(job.attempts(), result).toMillis();
+            updated = jobs.markRetry(job.jobId(), job.attempts(), delayMillis, error);
+        } else if (outcome == AttemptOutcome.RETRYABLE_FAIL) {
+            String text = RetryPolicy.EXHAUSTED_CODE + " after " + job.attempts() + " attempts / " + error;
+            updated = jobs.markFailed(job.jobId(), job.attempts(), cap(text));
+        } else {
+            updated = jobs.markFailed(job.jobId(), job.attempts(), error);
+        }
         if (updated == 0) {
             log.warn("Stale result ignored: job {} attempts {} no longer owned", job.jobId(), job.attempts());
         }
         return updated > 0;
+    }
+
+    private static String cap(String text) {
+        return text.length() > ERROR_MAX ? text.substring(0, ERROR_MAX) : text;
     }
 }

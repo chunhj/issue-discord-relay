@@ -2,6 +2,7 @@ package com.example.githubwebhook.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -67,7 +68,32 @@ class ConfigValidationTest {
             AppProperties props = ctx.getBean(AppProperties.class);
             assertThat(props.worker().batchSize()).isEqualTo(10);
             assertThat(props.worker().leaseSeconds()).isEqualTo(30);
+            AppProperties.Worker.Retry retry = props.worker().retry();
+            assertThat(retry.maxAttempts()).isEqualTo(5);
+            assertThat(retry.baseDelay()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(retry.multiplier()).isEqualTo(3.0);
+            assertThat(retry.maxDelay()).isEqualTo(Duration.ofSeconds(300));
+            assertThat(retry.jitterRatio()).isEqualTo(0.2);
+            assertThat(retry.maxRetryAfter()).isEqualTo(Duration.ofSeconds(3600));
         });
+    }
+
+    @Test
+    void retry_overrides_bind() {
+        valid().withPropertyValues("app.worker.retry.max-attempts=7", "app.worker.retry.base-delay=2s").run(ctx -> {
+            assertThat(ctx).hasNotFailed();
+            AppProperties.Worker.Retry retry = ctx.getBean(AppProperties.class).worker().retry();
+            assertThat(retry.maxAttempts()).isEqualTo(7);
+            assertThat(retry.baseDelay()).isEqualTo(Duration.ofSeconds(2));
+            assertThat(retry.multiplier()).isEqualTo(3.0);
+        });
+    }
+
+    @Test
+    void invalid_retry_values_fail_binding() {
+        valid().withPropertyValues("app.worker.retry.max-attempts=0").run(ctx -> assertThat(ctx).hasFailed());
+        valid().withPropertyValues("app.worker.retry.multiplier=0.5").run(ctx -> assertThat(ctx).hasFailed());
+        valid().withPropertyValues("app.worker.retry.jitter-ratio=1.5").run(ctx -> assertThat(ctx).hasFailed());
     }
 
     @Test

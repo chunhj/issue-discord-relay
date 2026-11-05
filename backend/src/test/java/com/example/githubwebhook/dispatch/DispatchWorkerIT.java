@@ -50,17 +50,13 @@ class DispatchWorkerIT extends IntegrationTestBase {
         return rows.get(0);
     }
 
-    /** Runs one poll, then a second one that must find nothing: there is no retry code in phase 1. */
-    private void failOnceWithoutRetry(long issueNumber) throws Exception {
+    /** One poll sends once; the second finds nothing (RETRY_WAIT waits at least 4 s, FAILED is terminal). */
+    private void failOnce(long issueNumber, String expectedStatus) throws Exception {
         seed(issueNumber);
         assertThat(worker.pollOnce()).isEqualTo(1);
         assertThat(worker.pollOnce()).isZero();
-        // The journal entry of a delayed stub is written after the response ends, so wait for it briefly.
-        for (int i = 0; i < 50 && requestCount() < 1; i++) {
-            Thread.sleep(100);
-        }
         assertThat(requestCount()).isEqualTo(1);
-        assertThat(job().get("status")).isEqualTo("FAILED");
+        assertThat(job().get("status")).isEqualTo(expectedStatus);
     }
 
     private void assertNoUrlLeak(Map<String, Object> attempt) {
@@ -93,7 +89,7 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withStatus(500).withBody("boom")));
 
-        failOnceWithoutRetry(8002);
+        failOnce(8002, "RETRY_WAIT");
 
         Map<String, Object> a = onlyAttempt();
         assertThat(a.get("outcome")).isEqualTo("RETRYABLE_FAIL");
@@ -107,7 +103,7 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "5").withBody("slow down")));
 
-        failOnceWithoutRetry(8003);
+        failOnce(8003, "RETRY_WAIT");
 
         Map<String, Object> a = onlyAttempt();
         assertThat(a.get("outcome")).isEqualTo("RETRYABLE_FAIL");
@@ -119,7 +115,7 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withStatus(404).withBody("unknown webhook")));
 
-        failOnceWithoutRetry(8004);
+        failOnce(8004, "FAILED");
 
         Map<String, Object> a = onlyAttempt();
         assertThat(a.get("outcome")).isEqualTo("PERMANENT_FAIL");
@@ -131,11 +127,13 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)));
 
-        failOnceWithoutRetry(8005);
+        failOnce(8005, "RETRY_WAIT");
 
         Map<String, Object> a = onlyAttempt();
         assertThat(a.get("outcome")).isEqualTo("RETRYABLE_FAIL");
         assertThat(a.get("http_status")).isNull();
+        assertThat((String) a.get("error")).startsWith("IO_ERROR");
+        assertThat((String) job().get("last_error")).startsWith("IO_ERROR");
         assertNoUrlLeak(a);
     }
 
@@ -144,11 +142,13 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withStatus(200).withFixedDelay(2500).withBody("{}")));
 
-        failOnceWithoutRetry(8006);
+        failOnce(8006, "RETRY_WAIT");
 
         Map<String, Object> a = onlyAttempt();
         assertThat(a.get("outcome")).isEqualTo("RETRYABLE_FAIL");
         assertThat(a.get("http_status")).isNull();
+        assertThat((String) a.get("error")).startsWith("READ_TIMEOUT");
+        assertThat((String) job().get("last_error")).startsWith("READ_TIMEOUT");
         assertNoUrlLeak(a);
     }
 
@@ -157,7 +157,7 @@ class DispatchWorkerIT extends IntegrationTestBase {
         WIREMOCK.stubFor(WireMock.post(urlPathEqualTo(DISCORD_PATH))
                 .willReturn(aResponse().withStatus(500).withBody("x".repeat(5000))));
 
-        failOnceWithoutRetry(8007);
+        failOnce(8007, "RETRY_WAIT");
 
         assertThat((String) onlyAttempt().get("error")).hasSizeLessThanOrEqualTo(500);
         assertThat((String) job().get("last_error")).hasSizeLessThanOrEqualTo(500);

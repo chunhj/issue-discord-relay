@@ -8,6 +8,13 @@ app:
     poll-interval-ms: 1000
     batch-size: 10
     lease-seconds: 30
+    retry:
+      max-attempts: 5     # counts the first send
+      base-delay: 5s
+      multiplier: 3
+      max-delay: 300s
+      jitter-ratio: 0.2
+      max-retry-after: 3600s
 
 spring:
   datasource:
