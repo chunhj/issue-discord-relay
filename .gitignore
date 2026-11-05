@@ -1,0 +1,13 @@
+# Secrets: only .env.example is tracked (D-17)
+.env
+!.env.example
+
+# Build output and tooling
+build/
+.gradle/
+.idea/
+*.iml
+out/
+node_modules/
+*.log
+.DS_Store

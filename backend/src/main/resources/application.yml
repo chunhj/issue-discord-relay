@@ -1,0 +1,31 @@
+app:
+  github:
+    webhook-secret: ${GITHUB_WEBHOOK_SECRET:}   # empty default + @NotBlank -> binding failure, app does not start (D-09)
+  discord:
+    webhook-url: ${DISCORD_WEBHOOK_URL:}        # env only, never stored or logged (D-13)
+  worker:
+    enabled: true
+    poll-interval-ms: 1000
+    batch-size: 10
+    lease-seconds: 30
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/webhook}
+    username: ${DB_USERNAME:webhook}
+    password: ${DB_PASSWORD:webhook}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  http:
+    clients:
+      connect-timeout: 2s
+      read-timeout: 5s   # must stay well under app.worker.lease-seconds
+
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-exception: never
+    include-binding-errors: never

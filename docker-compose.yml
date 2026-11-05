@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17   # same literal as IntegrationTestBase.POSTGRES_IMAGE
+    environment:
+      POSTGRES_DB: webhook
+      POSTGRES_USER: ${DB_USERNAME:-webhook}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-webhook}
+    ports:
+      - "127.0.0.1:5432:5432"   # local only (T-01-05)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
