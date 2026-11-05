@@ -46,7 +46,7 @@ public class DiscordClient {
     public SendResult send(String repo, long issueNumber, String title, String htmlUrl) {
         // Empty parse list: a hostile "@everyone" title must never ping anyone (D-11).
         Payload payload = new Payload(
-                List.of(new Embed(embedTitle(issueNumber, title), htmlUrl, new Footer(repo))),
+                List.of(new Embed(composeTitle(issueNumber, title), htmlUrl, new Footer(repo))),
                 new AllowedMentions(List.of()));
         try {
             return restClient.post().uri(uri).contentType(MediaType.APPLICATION_JSON).body(payload)
@@ -65,7 +65,8 @@ public class DiscordClient {
         }
     }
 
-    static String embedTitle(long number, String title) {
+    /** "#number title", at most 256 UTF-16 units including the trailing ellipsis (Discord embed limit). */
+    static String composeTitle(long number, String title) {
         String full = "#" + number + " " + title;
         if (full.length() <= TITLE_MAX) {
             return full;

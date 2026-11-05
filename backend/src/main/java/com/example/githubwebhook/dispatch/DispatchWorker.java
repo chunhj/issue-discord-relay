@@ -47,6 +47,11 @@ public class DispatchWorker {
         List<ClaimedJob> claimed = claimService.claim();
         for (ClaimedJob job : claimed) {
             try {
+                // The batch shares one lease but sends are serial: re-check ownership right before the send (PD-06).
+                if (!resultService.renewLease(job)) {
+                    log.warn("Lease lost, skipping job {} attempts {}", job.jobId(), job.attempts());
+                    continue;
+                }
                 WebhookEvent event = events.findById(job.eventId()).orElseThrow();
                 SendResult result = discord.send(event.getRepo(), event.getIssueNumber(), event.getTitle(),
                         event.getHtmlUrl());

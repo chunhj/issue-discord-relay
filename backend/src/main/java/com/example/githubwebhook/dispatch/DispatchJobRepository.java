@@ -38,6 +38,15 @@ public interface DispatchJobRepository extends JpaRepository<DispatchJob, Long> 
     @Query(nativeQuery = true, value = "INSERT INTO dispatch_jobs (event_id, status) VALUES (:eventId, 'PENDING')")
     int enqueue(@Param("eventId") long eventId);
 
+    // Extends the lease and doubles as an ownership check: 0 rows means the job was re-claimed (attempts moved on).
+    @Modifying
+    @Query(nativeQuery = true, value = """
+            UPDATE dispatch_jobs
+            SET locked_until = now() + CAST(:leaseSeconds AS integer) * interval '1 second'
+            WHERE id = :id AND status = 'PROCESSING' AND attempts = :attempts
+            """)
+    int renewLease(@Param("id") long id, @Param("attempts") int attempts, @Param("leaseSeconds") int leaseSeconds);
+
     // Result writes are fenced: attempts is incremented by every claim, so only the current claimer matches (T-01-09).
     @Modifying
     @Query(nativeQuery = true, value = """
