@@ -7,7 +7,6 @@ function App() {
 
   return (
     <main>
-      <h1>발송 이력</h1>
       <Toolbar
         lastUpdated={h.lastUpdated}
         onRefresh={h.refresh}
@@ -24,8 +23,8 @@ function App() {
           </button>
         </div>
       )}
-      {h.loading && h.items.length === 0 && <p>불러오는 중…</p>}
-      {!h.loading && !h.error && h.items.length === 0 && <p>아직 수신한 이벤트가 없습니다</p>}
+      {h.loading && h.items.length === 0 && <p className="state-msg">불러오는 중…</p>}
+      {!h.loading && !h.error && h.items.length === 0 && <p className="state-msg">아직 수신한 이벤트가 없습니다</p>}
       <HistoryTable items={h.items} />
       {h.nextBefore !== null && (
         <button type="button" className="more" onClick={() => void h.loadMore()} disabled={h.loadingMore}>

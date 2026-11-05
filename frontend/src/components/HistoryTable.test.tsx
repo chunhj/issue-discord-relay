@@ -68,6 +68,18 @@ it('links only https issue urls, with noopener noreferrer', () => {
   expect(link.getAttribute('rel')).toMatch(/noopener/)
   expect(link.getAttribute('rel')).toMatch(/noreferrer/)
   expect(screen.getAllByRole('link')).toHaveLength(1)
-  expect(screen.getByText(/#7 evil/)).toBeInTheDocument()
-  expect(screen.getByText(/#7 plain/)).toBeInTheDocument()
+  expect(screen.getByText(/evil/).closest('td')).toHaveTextContent('#7 evil')
+  expect(screen.getByText(/plain/).closest('td')).toHaveTextContent('#7 plain')
+})
+
+it('renders a distinct decorative glyph in every status badge, in addition to the label', () => {
+  const glyphs = (Object.keys(LABELS) as JobStatus[]).map((status) => {
+    const { container, unmount } = render(<HistoryTable items={[item({ status })]} />)
+    const glyph = container.querySelector(`[data-status="${status}"] [aria-hidden="true"]`)
+    const text = glyph?.textContent ?? ''
+    unmount()
+    return text
+  })
+  glyphs.forEach((g) => expect(g).not.toBe(''))
+  expect(new Set(glyphs).size).toBe(5)
 })
