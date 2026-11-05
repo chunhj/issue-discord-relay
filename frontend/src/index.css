@@ -1,0 +1,63 @@
+body {
+  margin: 0;
+  font-family: system-ui, 'Noto Sans KR', sans-serif;
+  color: #1f2328;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #d8dee4;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.badge-pending {
+  background: #eaeef2;
+  color: #24292f;
+}
+
+.badge-processing {
+  background: #ddf4ff;
+  color: #0a3069;
+}
+
+.badge-retry_wait {
+  background: #fff8c5;
+  color: #633c01;
+}
+
+.badge-sent {
+  background: #dafbe1;
+  color: #0f5323;
+}
+
+.badge-failed {
+  background: #ffebe9;
+  color: #82071e;
+}
+
+.last-error {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
