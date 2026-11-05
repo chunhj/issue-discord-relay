@@ -286,6 +286,27 @@ class HistoryApiIT extends IntegrationTestBase {
     }
 
     @Test
+    void last_error_echoing_a_webhook_url_or_token_is_redacted_but_keeps_the_error_code() throws Exception {
+        String token = "AbCdEf0123456789-_AbCdEf0123456789-_AbCdEf0123456789-_AbCdEf0123456789";
+        String sig = "sha256=" + "a1b2c3d4".repeat(8);
+        seed("r-1", T.plusSeconds(1), "FAILED", 5,
+                "HTTP 404: bad gateway for https://discord.com/api/webhooks/123456789012345678/" + token, null);
+        seed("r-2", T.plusSeconds(2), "RETRY_WAIT", 1,
+                "HTTP 502: upstream /api/v10/webhooks/123456789012345678/" + token + "?wait=true", null);
+        seed("r-3", T.plusSeconds(3), "FAILED", 5, "HTTP 400: echoed header " + sig + " and key " + token, null);
+
+        String body = get("/api/history").body();
+
+        assertNoneOf(body, token, "webhooks/123456789012345678", "discord.com/api", "sha256=", "a1b2c3d4a1b2c3d4");
+        List<String> errors = new ArrayList<>();
+        mapper.readTree(body).get("items").forEach(i -> errors.add(i.get("lastError").asString()));
+        assertThat(errors).hasSize(3);
+        assertThat(errors).anyMatch(e -> e.startsWith("HTTP 404: bad gateway for "));
+        assertThat(errors).anyMatch(e -> e.startsWith("HTTP 502: upstream "));
+        assertThat(errors).anyMatch(e -> e.startsWith("HTTP 400: echoed header "));
+    }
+
+    @Test
     void real_worker_failures_stay_clean() throws Exception {
         byte[] body404 = SignedRequests.issuesOpened(1, "first");
         assertThat(postSigned("issues", "rw-1", body404).statusCode()).isEqualTo(202);

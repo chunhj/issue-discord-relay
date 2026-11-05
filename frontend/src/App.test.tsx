@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import App from './App'
 import type { HistoryItem, HistoryPage } from './api/history'
@@ -107,6 +107,22 @@ it('refresh_error_keeps_previous_rows', async () => {
   fireEvent.click(screen.getByRole('button', { name: '새로고침' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('목록을 불러오지 못했습니다.')
   expect(screen.getByText(/first issue/)).toBeInTheDocument()
+})
+
+it('refresh_button_reloads_first_page_and_drops_load_more_rows', async () => {
+  const fetchMock = vi.fn().mockImplementation((url: string) =>
+    params([url]).has('before')
+      ? Promise.resolve(ok({ items: [mk(40, { title: 'older issue' })], nextBefore: null }))
+      : Promise.resolve(ok({ items: [mk(60, { title: 'newer issue' })], nextBefore: 50 })),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  render(<App />)
+  await screen.findByText(/newer issue/)
+  fireEvent.click(screen.getByRole('button', { name: '더 보기' }))
+  await screen.findByText(/older issue/)
+  fireEvent.click(screen.getByRole('button', { name: '새로고침' }))
+  await waitFor(() => expect(screen.queryByText(/older issue/)).not.toBeInTheDocument())
+  expect(screen.getByRole('button', { name: '더 보기' })).toBeInTheDocument()
 })
 
 it('load_more_sends_before_and_appends', async () => {

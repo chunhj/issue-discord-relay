@@ -21,7 +21,7 @@ export function useHistory() {
 
   const autoRef = useRef(true)
   const moreRef = useRef<AbortController | null>(null) // 더 보기 요청이 진행 중이면 그 컨트롤러
-  const fetchHeadRef = useRef<() => Promise<void>>(async () => {})
+  const fetchHeadRef = useRef<(replace?: boolean) => Promise<void>>(async () => {})
 
   // 첫 페이지 로드 + 폴링. 이전 요청이 끝난 뒤에만 다음 setTimeout을 건다 (D-12).
   useEffect(() => {
@@ -29,13 +29,14 @@ export function useHistory() {
     const flight = { active: false }
     const controller = new AbortController()
 
-    const fetchHead = async () => {
-      if (flight.active) return
+    // replace=true(새로고침 버튼)는 진행 중인 폴링과 무관하게 첫 페이지로 전체 교체한다. 폴링은 병합형이다.
+    const fetchHead = async (replace = false) => {
+      if (flight.active && !replace) return
       flight.active = true
       try {
         const head = await fetchHistory(queryOf(status), controller.signal)
         if (controller.signal.aborted) return
-        setPage((prev) => mergeFirstPage(prev, head))
+        setPage((prev) => (replace ? head : mergeFirstPage(prev, head)))
         setError(null)
         setLastUpdated(new Date())
       } catch {
@@ -80,7 +81,13 @@ export function useHistory() {
     setAutoState(next)
   }, [])
 
-  const refresh = useCallback(() => fetchHeadRef.current(), [])
+  // 새로고침은 전체 재로드: 더 보기로 받은 행도 버리고 첫 페이지만 다시 받아 상태를 갱신한다.
+  const refresh = useCallback(() => {
+    moreRef.current?.abort() // 이전 커서로 받는 더 보기 응답이 교체된 목록에 붙지 않게 한다
+    moreRef.current = null
+    setLoadingMore(false)
+    return fetchHeadRef.current(true)
+  }, [])
 
   const loadMore = useCallback(async () => {
     const before = page.nextBefore

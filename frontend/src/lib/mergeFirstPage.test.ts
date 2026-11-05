@@ -62,6 +62,22 @@ it('drops a newer prev row that is missing from the head', () => {
   expect(merged.nextBefore).toBe(4)
 })
 
+it('falls back to the head when it does not overlap prev, so load-more can fetch the gap', () => {
+  const head = { items: [row(10), row(9), row(8)], nextBefore: 8 }
+  const merged = mergeFirstPage({ items: [row(5), row(4)], nextBefore: 4 }, head)
+  expect(ids(merged.items)).toEqual([10, 9, 8])
+  expect(merged.nextBefore).toBe(8)
+})
+
+it('does not hide the gap behind a null cursor when prev was loaded to the end', () => {
+  const merged = mergeFirstPage(
+    { items: [row(5), row(4)], nextBefore: null },
+    { items: [row(10), row(9), row(8)], nextBefore: 8 },
+  )
+  expect(ids(merged.items)).toEqual([10, 9, 8])
+  expect(merged.nextBefore).toBe(8)
+})
+
 it('uses the head cursor when nothing older was kept', () => {
   const merged = mergeFirstPage(
     { items: [row(9)], nextBefore: 9 },

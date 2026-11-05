@@ -166,6 +166,25 @@ it('loadMore requests before with the active status, appends without duplicates 
   expect(result.current.loadingMore).toBe(false)
 })
 
+it('refresh reloads the first page fully, dropping load-more rows, while polling stays merge-based', async () => {
+  const head = ok({ items: [row(60), row(55)], nextBefore: 50 })
+  const fetchMock = vi.fn().mockImplementation((url: string) =>
+    params([url]).has('before')
+      ? Promise.resolve(ok({ items: [row(40, { status: 'RETRY_WAIT' })], nextBefore: 30 }))
+      : Promise.resolve(head),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  const { result } = renderHook(() => useHistory())
+  await flush()
+  await act(async () => void (await result.current.loadMore()))
+  expect(ids(result.current.items)).toEqual([60, 55, 40])
+  await flush(5000) // 폴링은 병합형이라 더 보기 행이 남는다
+  expect(ids(result.current.items)).toEqual([60, 55, 40])
+  await act(async () => void (await result.current.refresh()))
+  expect(ids(result.current.items)).toEqual([60, 55])
+  expect(result.current.nextBefore).toBe(50)
+})
+
 it('keeps items and sets the fixed error when loadMore fails', async () => {
   const fetchMock = vi.fn().mockImplementation((url: string) =>
     params([url]).has('before')
