@@ -32,7 +32,9 @@ public abstract class IntegrationTestBase {
     static {
         POSTGRES = new PostgreSQLContainer(POSTGRES_IMAGE);
         POSTGRES.start();
-        WIREMOCK = new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        // The JDK HttpClient behind RestClient tries an h2c upgrade on cleartext POSTs, which WireMock's Jetty drops
+        // (EOFException). Production talks HTTPS (ALPN), so only the plain-text test server needs this switched off.
+        WIREMOCK = new WireMockServer(WireMockConfiguration.options().dynamicPort().http2PlainDisabled(true));
         WIREMOCK.start();
     }
 

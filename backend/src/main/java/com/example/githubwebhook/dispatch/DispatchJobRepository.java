@@ -37,4 +37,21 @@ public interface DispatchJobRepository extends JpaRepository<DispatchJob, Long> 
     @Modifying
     @Query(nativeQuery = true, value = "INSERT INTO dispatch_jobs (event_id, status) VALUES (:eventId, 'PENDING')")
     int enqueue(@Param("eventId") long eventId);
+
+    // Result writes are fenced: attempts is incremented by every claim, so only the current claimer matches (T-01-09).
+    @Modifying
+    @Query(nativeQuery = true, value = """
+            UPDATE dispatch_jobs
+            SET status = 'SENT', sent_at = now(), locked_until = NULL, discord_message_id = :messageId, last_error = NULL
+            WHERE id = :id AND status = 'PROCESSING' AND attempts = :attempts
+            """)
+    int markSent(@Param("id") long id, @Param("attempts") int attempts, @Param("messageId") String messageId);
+
+    @Modifying
+    @Query(nativeQuery = true, value = """
+            UPDATE dispatch_jobs
+            SET status = 'FAILED', locked_until = NULL, last_error = :error
+            WHERE id = :id AND status = 'PROCESSING' AND attempts = :attempts
+            """)
+    int markFailed(@Param("id") long id, @Param("attempts") int attempts, @Param("error") String error);
 }
