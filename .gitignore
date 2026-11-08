@@ -11,3 +11,8 @@ out/
 node_modules/
 *.log
 .DS_Store
+
+# GSD planning docs and local tool state: kept locally, not published
+.planning/
+.claude/.headroom_wrap_*
+.claude/settings.local.json
