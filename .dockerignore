@@ -1,0 +1,13 @@
+# Build context is the repo root (the image builds the screen and the backend together).
+**/node_modules
+**/dist
+**/build
+**/.gradle
+**/.idea
+**/*.iml
+.git
+.planning
+.claude
+**/.env
+*.pem
+docs

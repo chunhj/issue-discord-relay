@@ -16,3 +16,6 @@ node_modules/
 .planning/
 .claude/.headroom_wrap_*
 .claude/settings.local.json
+
+# Built screen is copied here only inside the image build
+backend/src/main/resources/static/

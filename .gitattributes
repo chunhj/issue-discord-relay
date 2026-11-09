@@ -1,0 +1,4 @@
+# Windows checkouts with autocrlf must not turn shell scripts or container build inputs into CRLF.
+*.sh text eol=lf
+Dockerfile text eol=lf
+backend/gradlew text eol=lf

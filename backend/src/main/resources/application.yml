@@ -17,6 +17,12 @@ app:
       max-retry-after: 3600s
 
 spring:
+  task:
+    scheduling:
+      shutdown:
+        # Redeploy stops the container: let a Discord send in flight finish (read timeout 5s) so it is not sent twice.
+        await-termination: true
+        await-termination-period: 8s   # under Docker's 10s stop timeout
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/webhook}
     username: ${DB_USERNAME:webhook}
