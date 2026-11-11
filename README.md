@@ -60,13 +60,29 @@ Docker가 필요하다.
 2. 서버에만 `.env`를 만든다. 커밋하지 않고, 채팅이나 이슈에도 붙여 넣지 않는다.
 3. DB 비밀번호(`DB_PASSWORD`)는 첫 실행 전에 정한다. Postgres는 처음 정한 비밀번호를 계속 쓰기 때문에 나중에 `.env`만 바꾸면 백엔드가 접속하지 못한다.
 4. 처음에는 `docker compose up -d --build`를 실행한다.
-5. 업데이트할 때는 아래를 실행한다. 마지막 줄은 안 쓰는 옛 이미지를 지워서 디스크(8GB)가 차지 않게 한다.
+5. 자동 배포: `main`에 push하면 테스트가 통과한 뒤 GitHub Actions가 서버에 SSH로 들어가 그 커밋을 받아 다시 빌드하고 띄운다. 설정은 아래 "자동 배포 설정"을 따른다.
+6. 직접 업데이트할 때는 아래를 실행한다. 마지막 줄은 안 쓰는 옛 이미지를 지워서 디스크(8GB)가 차지 않게 한다.
 
    ```bash
    git pull
    docker compose up -d --build
    docker image prune -f
    ```
+
+### 자동 배포 설정
+
+1. 서버에서 배포용 키를 만들고 그 공개키를 서버가 허용하게 한다.
+
+   ```bash
+   ssh-keygen -t ed25519 -N "" -f ~/.ssh/deploy_key
+   cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys
+   ```
+
+2. GitHub 저장소 Settings > Secrets and variables > Actions에 시크릿 두 개를 만든다.
+   - `EC2_HOST`: 서버 공개 IP
+   - `EC2_SSH_KEY`: `cat ~/.ssh/deploy_key`로 나온 비공개키 전체(첫 줄 BEGIN부터 끝 줄 END까지)
+
+3. 키 파일은 서버 밖으로 꺼낸 뒤 서버에서 지워도 된다. 서버 IP가 바뀌면 `EC2_HOST`를 고친다.
 
 - 80번 포트를 연다. 5432와 8080은 열지 않는다.
 - SSH(22번)는 키로만 로그인하게 하고, 가능하면 자기 IP로 제한한다.

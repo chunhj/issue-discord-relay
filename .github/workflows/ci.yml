@@ -60,3 +60,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker compose --env-file .env.example build
+
+  # main에 push되고 세 검사가 모두 통과하면, 테스트한 바로 그 커밋을 서버에 올린다. PR에서는 돌지 않는다.
+  deploy:
+    needs: [backend, frontend, images]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: deploy
+      cancel-in-progress: false   # 배포 도중에 취소되지 않게, 새 배포는 줄을 서서 기다린다
+    steps:
+      - name: Deploy the tested commit over SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # shortcut: 호스트 키를 처음 만났을 때 믿고 저장한다(중간자 공격은 막지 못함). 서버 IP가 고정이면 EC2_HOST_KEY 시크릿으로 고정한다.
+          ssh-keyscan -T 10 "$EC2_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key "ec2-user@$EC2_HOST" \
+            "cd ~/issue-discord-relay && git fetch origin main && git reset --hard $GITHUB_SHA && docker compose up -d --build && docker image prune -f"
+      - name: Check the screen answers
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors --max-time 15 "http://$EC2_HOST/api/history" > /dev/null
