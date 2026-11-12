@@ -1,117 +1,102 @@
-# issue-discord-relay
+# Github Issue Discord Relay
 
-[![CI](https://github.com/chunhj/issue-discord-relay/actions/workflows/ci.yml/badge.svg)](https://github.com/chunhj/issue-discord-relay/actions/workflows/ci.yml)
+GitHub 저장소에 새 이슈가 열리면 Discord 채널로 이슈 제목과 링크를 보내는 Webhook 중계 서비스다.
 
-GitHub 저장소에 새 이슈가 생기면 Discord 채널에 이슈 제목과 링크를 보내 주는 서비스다.
-GitHub가 보낸 요청의 서명을 확인하고, 발송 작업을 DB에 저장하고, 실패하면 다시 시도한다.
-받은 기록과 보낸 기록은 화면 한 곳에서 본다.
+**목표: GitHub에 성공 응답을 준 이벤트는 서버가 죽거나 Discord가 불안정해도 잃어버리지 않고 전달한다.**
 
-## 핵심 약속
+- 서비스: http://3.34.217.173 (수신·발송 이력 화면)
+- GitHub: https://github.com/chunhj/issue-discord-relay
+- 문서: [전달 보장과 중복 발송](docs/delivery-semantics.md) · [배포와 운영](docs/deployment.md)
 
-- GitHub에 2xx 응답을 돌려준 이벤트는 이미 DB에 저장된 상태다.
-- 그래서 서버가 죽거나 Discord가 불안정해도 유실되지 않고 전달된다.
-- 전달은 at-least-once다. Discord 웹훅에는 멱등 키가 없어서 같은 메시지가 두 번 갈 수 있다.
-- 중복은 없다고 말하지 않는다. 얼마나 생기는지 측정해서 보고한다. 측정 숫자는 이후 단계에서 채운다.
+## 주요 기능
 
-자세한 설명은 [docs/delivery-semantics.md](docs/delivery-semantics.md)에 있다.
+- GitHub Webhook 수신 (HMAC 서명 검증)
+- Discord 발송과 실패 시 자동 재시도
+- 수신·발송 이력 조회 화면 (상태 필터, 5초마다 자동 갱신)
 
-## 구성
+## 실행 화면
+
+GitHub에 이슈를 열면 Discord 채널에 이슈 번호, 제목, 저장소 이름이 담긴 메시지가 도착한다.
+
+<img width="653" height="181" alt="Discord로 전달된 이슈 알림" src="https://github.com/user-attachments/assets/2974ff5d-cab1-4768-8f1f-a9fb842678f9" />
+
+<br>같은 건이 이력 화면에 수신 시각, 발송 상태, 시도 횟수, 전달까지 걸린 시간과 함께 기록된다.
+
+<img width="1221" height="82" alt="이력 화면의 발송 완료 기록" src="https://github.com/user-attachments/assets/e3704dcf-1491-48ed-b14a-eb98ee967b4a" />
+
+## 핵심 기술
+
+### 1. 응답 전 DB 저장으로 이벤트 유실 방지
+
+- **문제**: GitHub는 성공 응답을 받은 이벤트를 다시 보내지 않는다. 응답 후에 처리하다 서버가 죽으면 이벤트가 사라진다.
+- **해결**: 이벤트와 발송 작업을 한 트랜잭션으로 저장하고, 커밋이 끝난 뒤에만 응답한다. Discord 발송은 백그라운드 워커가 따로 처리한다.
+- **결과**: Discord가 멈춰 있어도 수신은 영향을 받지 않고, 저장된 작업은 서버가 재시작된 뒤 이어서 발송된다.
+
+### 2. DB 제약으로 중복 수신 처리
+
+- **문제**: GitHub는 같은 이벤트를 다시 보낼 수 있다. "조회 후 없으면 저장" 방식은 동시에 들어온 요청을 둘 다 통과시킨다.
+- **해결**: 이벤트 고유 ID에 PostgreSQL UNIQUE 제약을 걸고, 충돌하면 저장을 건너뛴다. 중복 판단을 애플리케이션이 아닌 DB에 맡겼다.
+- **결과**: 같은 이벤트가 몇 번 와도 발송 작업은 하나만 생긴다.
+
+### 3. PostgreSQL 작업 큐와 처리 기한(lease)
+
+- **문제**: 워커 여러 개가 같은 작업을 집으면 중복 발송이 생기고, 작업을 잡은 서버가 죽으면 그 작업은 멈춘다.
+- **해결**: 서버 한 대 규모라 메시지 큐를 따로 두지 않고 DB 테이블을 큐로 썼다. `FOR UPDATE SKIP LOCKED`로 다른 워커가 잡은 작업은 건너뛰고, 작업마다 처리 기한을 둬서 기한이 지나면 다른 워커가 회수한다. Discord 호출 중에는 DB 트랜잭션을 잡지 않는다.
+- **결과**: 워커끼리 서로 기다리거나 같은 작업을 처리하지 않고, 죽은 서버의 작업도 자동으로 복구된다.
+
+### 4. 실패 유형별 재시도와 중복 발송의 한계 정의
+
+- **문제**: Discord는 일시 장애나 요청 한도 초과(429)를 낸다. 또 Discord 웹훅에는 멱등 키가 없어서, 발송 후 결과를 기록하기 전에 서버가 죽으면 같은 메시지가 다시 나갈 수 있다.
+- **해결**: 일시 오류는 대기 시간을 늘려 가며 최대 5회 재시도하고, 429는 Discord가 알려 준 시간만큼 기다리며, 복구할 수 없는 오류는 바로 실패 처리한다. 전달 보장을 at-least-once로 정의하고, 중복 횟수를 시도 한도 안으로 제한했다.
+- **결과**: 중복이 생기는 구간을 실제 프로세스 강제 종료 테스트로 재현하고 [문서](docs/delivery-semantics.md)로 정리했다.
+
+## 검증 결과
+
+실제 PostgreSQL(Testcontainers)과 모의 Discord 서버(WireMock)로 테스트하며, GitHub Actions에서 push마다 실행한다.
+
+| 시나리오 | 결과 |
+|----------|------|
+| 같은 이벤트 동시 요청 100건 | 발송 작업 1건 생성 (중복 저장 0%) |
+| 저장 직후 서버 강제 종료 → 재시작 | 이벤트 유실 0건, 발송 1회 |
+| 워커 2개가 이슈 20건을 동시 처리 | 모든 이슈가 정확히 1회씩 발송 |
+
+응답 시간과 처리량은 아직 측정하지 않았다.
+
+## 아키텍처
 
 ```text
-GitHub  ──> /webhooks/github ──┐
-                               ├─> app (Spring Boot) ──> postgres
-브라우저 ──> 화면, /api/history ─┘        └──> Discord
+GitHub ──> 수신 API (서명 검증, 저장) ──> PostgreSQL <── 발송 워커 ──> Discord
+브라우저 ──> 이력 조회 API ─────────────────┘
 ```
 
-- 컨테이너는 둘이다. app(Spring Boot)과 postgres.
-- app이 빌드된 화면(React)도 직접 내려 준다. 따로 웹 서버를 두지 않았다.
-- 바깥에 열려 있는 것은 app 포트(80 -> 8080)뿐이다. DB 포트는 `127.0.0.1`에만 열린다.
+Docker Compose로 app(Spring Boot)과 PostgreSQL 컨테이너 두 개를 AWS EC2에 띄운다. React 화면은 Spring Boot가 함께 제공한다.
 
-## 로컬에서 실행
+## 기술 스택
 
-Docker가 필요하다.
+| 영역 | 기술 |
+|------|------|
+| Backend | Java 21, Spring Boot 4.1, Spring Data JPA, Flyway |
+| Database | PostgreSQL |
+| Frontend | React, TypeScript, Vite |
+| Test | JUnit 5, Testcontainers, WireMock, Vitest |
+| Infra | Docker Compose, AWS EC2, GitHub Actions (테스트 통과 후 자동 배포) |
 
-1. `.env.example`을 `.env`로 복사하고 값을 채운다.
-2. 실행한다.
+## 실행 방법
 
-   ```bash
-   docker compose up -d --build
-   ```
-
-3. 브라우저에서 http://localhost 를 연다. `HTTP_PORT`를 바꿨다면 그 포트로 연다.
-4. 경계 확인 스크립트를 돌린다.
-
-   ```bash
-   scripts/smoke.sh http://localhost
-   ```
-
-참고
-
-- 80번이나 5432번 포트를 다른 프로그램이 쓰고 있으면 `.env`에 `HTTP_PORT`, `DB_HOST_PORT`를 적어서 바꾼다.
-- Windows의 `SPRING_DATASOURCE_PASSWORD` 환경변수는 백엔드를 호스트에서 직접 띄울 때만 영향을 준다. 컨테이너에는 전달되지 않는다.
-- 멈출 때는 `docker compose down`을 쓴다. `docker compose down -v`는 DB 볼륨까지 지우니 데이터가 사라진다.
-- `.env`가 없으면 `docker compose` 명령이 모두 실패한다. 필수 변수를 파일 전체에서 검사하기 때문이다.
-
-## 서버(EC2)에 배포
-
-서버에서 이미지를 직접 빌드하는 방식이다.
-
-1. 서버에서 저장소를 한 번 `git clone` 한다.
-2. 서버에만 `.env`를 만든다. 커밋하지 않고, 채팅이나 이슈에도 붙여 넣지 않는다.
-3. DB 비밀번호(`DB_PASSWORD`)는 첫 실행 전에 정한다. Postgres는 처음 정한 비밀번호를 계속 쓰기 때문에 나중에 `.env`만 바꾸면 백엔드가 접속하지 못한다.
-4. 처음에는 `docker compose up -d --build`를 실행한다.
-5. 자동 배포: `main`에 push하면 테스트가 통과한 뒤 GitHub Actions가 서버에 SSH로 들어가 그 커밋을 받아 다시 빌드하고 띄운다. 설정은 아래 "자동 배포 설정"을 따른다.
-6. 직접 업데이트할 때는 아래를 실행한다. 마지막 줄은 안 쓰는 옛 이미지를 지워서 디스크(8GB)가 차지 않게 한다.
-
-   ```bash
-   git pull
-   docker compose up -d --build
-   docker image prune -f
-   ```
-
-### 자동 배포 설정
-
-1. 서버에서 배포용 키를 만들고 그 공개키를 서버가 허용하게 한다.
-
-   ```bash
-   ssh-keygen -t ed25519 -N "" -f ~/.ssh/deploy_key
-   cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys
-   ```
-
-2. GitHub 저장소 Settings > Secrets and variables > Actions에 시크릿 두 개를 만든다.
-   - `EC2_HOST`: 서버 공개 IP
-   - `EC2_SSH_KEY`: `cat ~/.ssh/deploy_key`로 나온 비공개키 전체(첫 줄 BEGIN부터 끝 줄 END까지)
-
-3. 키 파일은 서버 밖으로 꺼낸 뒤 서버에서 지워도 된다. 서버 IP가 바뀌면 `EC2_HOST`를 고친다.
-
-- 80번 포트를 연다. 5432와 8080은 열지 않는다.
-- SSH(22번)는 키로만 로그인하게 하고, 가능하면 자기 IP로 제한한다.
-- GitHub 저장소의 Webhook은 `http://<서버 주소>/webhooks/github`로 보내고, Secret은 서버 `.env`의 `GITHUB_WEBHOOK_SECRET`과 같게 둔다.
-
-## 테스트와 CI
-
-- 백엔드: `backend/gradlew -p backend test` (Testcontainers를 쓰므로 Docker가 필요하다)
-- 프론트엔드: `npm --prefix frontend run lint`, `npm --prefix frontend run test`, `npm --prefix frontend run build`
-
-GitHub Actions가 push와 pull request마다 같은 검사를 돌리고, 이미지 빌드까지 확인한다.
-위의 배지가 최근 실행 결과를 보여 준다.
-
-## 보안 메모
-
-- `/webhooks/github`는 백엔드가 HMAC 서명을 직접 검사한다. 서명이 틀리면 401이다.
-- DB 포트는 바깥에 공개하지 않는다.
-- 비밀 값(웹훅 시크릿, Discord URL, DB 비밀번호)은 서버의 `.env`에만 둔다. 저장소에는 가짜 값이 든 `.env.example`만 있다.
-
-## 백업(선택)
-
-예시다. 저장소 바깥 경로에 gzip 파일로 덤프한다.
+Docker가 필요합니다.
 
 ```bash
-docker compose exec -T postgres pg_dump -U webhook webhook | gzip > ~/backup-$(date +%F).sql.gz
+cp .env.example .env   # 웹훅 시크릿, Discord URL, DB 비밀번호 입력
+docker compose up -d --build
 ```
 
-## 알려진 한계
+http://localhost 에서 화면을 엽니다. 테스트는 `backend/gradlew -p backend test`로 실행합니다. 서버 배포와 자동 배포 설정은 [배포와 운영](docs/deployment.md)에 있습니다.
 
-- at-least-once라서 중복 발송이 생길 수 있다.
-- 서버 한 대로 운영한다. 이중화와 DB 복제는 없다.
-- 모니터링 시스템은 따로 두지 않았다. 컨테이너 로그로 확인한다.
+## 배포
+
+`main` 푸시 → GitHub Actions에서 백엔드 테스트, 프론트엔드 검사, Docker 이미지 빌드 → 모두 통과하면 SSH로 EC2에 접속해 테스트한 커밋을 받아 Docker Compose로 다시 빌드하고 실행합니다. 외부에는 80번 포트만 열고 DB 포트는 공개하지 않습니다. 설정: [.github/workflows/ci.yml](.github/workflows/ci.yml), 서버 준비와 시크릿 설정: [배포와 운영](docs/deployment.md)
+
+## 개선 과제 (미구현)
+
+- **중복 발송률 측정**: 중복이 생기는 구간은 재현했지만 발생 빈도는 측정하지 않았다. 발송 중 강제 종료를 반복하는 시나리오로 모의 Discord 서버의 수신 기록을 집계해 중복 비율을 수치로 보고할 계획이다.
+- **실패 작업 재발송**: 지금은 실패로 끝난 작업을 다시 보내려면 DB를 직접 수정해야 한다. 기존 동시성 제어를 그대로 쓰는 재발송 API를 추가해 장애 복구를 서비스 안에서 끝내려 한다.
